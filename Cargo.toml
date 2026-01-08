@@ -1,18 +1,24 @@
 [package]
-name = "duplex-scan-merger"
+name = "flipdf"
 version = "0.1.0"
 edition = "2021"
 authors = ["Masanari Higashi"]
-description = "Merge duplex-scanned PDFs into proper page order"
+description = "Merge duplex-scanned PDFs into proper page order - for home scanners without auto-duplex"
 license = "MIT"
-repository = "https://github.com/M-Igashi/duplex-scan-merger"
-keywords = ["pdf", "duplex", "scanner", "merge"]
+repository = "https://github.com/M-Igashi/flipdf"
+keywords = ["pdf", "duplex", "scanner", "merge", "brother"]
 categories = ["command-line-utilities"]
+
+[[bin]]
+name = "flipdf"
+path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4.4", features = ["derive"] }
 anyhow = "1.0"
 tempfile = "3.14"
+glob = "0.3"
+chrono = "0.4"
 
 [profile.release]
 strip = true
