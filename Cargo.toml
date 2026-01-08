@@ -1,0 +1,21 @@
+[package]
+name = "duplex-scan-merger"
+version = "0.1.0"
+edition = "2021"
+authors = ["Masanari Higashi"]
+description = "Merge duplex-scanned PDFs into proper page order"
+license = "MIT"
+repository = "https://github.com/higashi-masanari/duplex-scan-merger"
+keywords = ["pdf", "duplex", "scanner", "merge"]
+categories = ["command-line-utilities"]
+
+[dependencies]
+clap = { version = "4.4", features = ["derive"] }
+anyhow = "1.0"
+tempfile = "3.14"
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+panic = "abort"
