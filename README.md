@@ -1,97 +1,118 @@
-# duplex-scan-merger
+# flipdf
 
-A fast, native macOS CLI tool to merge duplex-scanned PDFs into proper page order.
+Merge duplex-scanned PDFs into proper page order — for home scanners without auto-duplex.
 
-## The Problem
+## Why?
 
-When scanning duplex (double-sided) documents without an ADF (Automatic Document Feeder):
+Many home multifunction printers (like the Brother MFC-J7460DN) have ADF (Auto Document Feeder) for continuous scanning, but lack automatic duplex scanning. This means scanning double-sided documents requires:
 
-1. First, you scan all **front pages** sequentially → `fronts.pdf` (pages 1, 2, 3...)
-2. Then you flip the stack and scan all **back pages** → `backs.pdf` (pages n, n-1, n-2... in reverse order)
+1. Scan all front pages → `fronts.pdf`
+2. Flip the stack, scan all back pages → `backs.pdf` (pages come out in reverse order)
+3. Manually interleave them... 😩
 
-This tool interleaves them into the correct reading order: front1, back1, front2, back2...
+**flipdf** automates step 3. Just run `flipdf` in your scan folder and you're done.
 
 ## Installation
 
-### Using Homebrew
+### Homebrew (macOS)
 
 ```bash
-brew tap M-Igashi/homebrew-tap
-brew install duplex-scan-merger
+brew tap M-Igashi/tap
+brew install flipdf
 ```
 
 ### From Source
 
 ```bash
-cargo install --git https://github.com/M-Igashi/duplex-scan-merger
+git clone https://github.com/M-Igashi/flipdf.git
+cd flipdf
+cargo install --path .
+```
+
+### Dependencies
+
+flipdf requires `qpdf` for PDF manipulation:
+
+```bash
+brew install qpdf
 ```
 
 ## Usage
 
+### Automatic Mode (Recommended)
+
+Just navigate to your scan folder and run:
+
 ```bash
-duplex-scan-merger <fronts.pdf> <backs.pdf> <output.pdf> [OPTIONS]
+flipdf
 ```
 
-### Arguments
+flipdf will automatically detect the two newest PDFs and merge them. The older PDF is treated as fronts, the newer as backs (since you scan fronts first, then flip and scan backs).
 
-| Argument | Description |
-|----------|-------------|
-| `fronts.pdf` | PDF with front pages (sequential order) |
-| `backs.pdf` | PDF with back pages (reverse order from flipped stack) |
-| `output.pdf` | Output merged PDF path |
+### Explicit Mode
+
+Specify files directly:
+
+```bash
+flipdf fronts.pdf backs.pdf
+flipdf fronts.pdf backs.pdf -o document.pdf
+```
+
+### List PDFs
+
+See what's in the current directory:
+
+```bash
+flipdf list
+flipdf list --all
+```
 
 ### Options
 
 | Option | Description |
 |--------|-------------|
-| `--prepend <FILE>` | PDF to add at the beginning (e.g., cover page) |
-| `--append <FILE>` | PDF to add at the end (e.g., appendix) |
+| `-o, --output <FILE>` | Output filename (default: `merged_YYYYMMDD_HHMMSS.pdf`) |
+| `--prepend <FILE>` | Add a PDF at the beginning (e.g., cover page) |
+| `--append <FILE>` | Add a PDF at the end (e.g., appendix) |
+| `--no-reverse` | Don't reverse back pages (if already in correct order) |
 | `-q, --quiet` | Suppress progress messages |
-| `-h, --help` | Print help |
-| `-V, --version` | Print version |
+| `--dry-run` | Show what would be done without executing |
 
 ### Examples
 
-Basic merge:
 ```bash
-duplex-scan-merger fronts.pdf backs.pdf merged.pdf
-```
+# Basic: auto-detect and merge
+flipdf
 
-With a cover page:
-```bash
-duplex-scan-merger fronts.pdf backs.pdf output.pdf --prepend cover.pdf
-```
+# With cover page
+flipdf --prepend cover.pdf
 
-With both prepend and append:
-```bash
-duplex-scan-merger fronts.pdf backs.pdf output.pdf --prepend cover.pdf --append appendix.pdf
+# Explicit files with custom output
+flipdf fronts.pdf backs.pdf -o contract.pdf
+
+# Add both cover and appendix
+flipdf fronts.pdf backs.pdf --prepend cover.pdf --append appendix.pdf
+
+# Check what would be merged
+flipdf --dry-run
 ```
 
 ## How It Works
 
-The tool handles the common duplex scanning workflow:
+When you scan a duplex document without auto-duplex:
 
 ```
-Original document:    Scanned fronts:    Scanned backs (flipped):    Result:
-┌───┐ ┌───┐ ┌───┐    [1, 2, 3]          [6, 5, 4]                    [1,4,2,5,3,6]
-│ 1 │ │ 2 │ │ 3 │         ↓                  ↓
-├───┤ ├───┤ ├───┤    fronts.pdf          backs.pdf
-│ 4 │ │ 5 │ │ 6 │
-└───┘ └───┘ └───┘
+Original document:  [1] [2] [3] [4] [5] [6]
+                     ↓   ↓   ↓   ↓   ↓   ↓
+                    F1  B1  F2  B2  F3  B3  (F=front, B=back)
+
+Scan fronts (ADF):  F1, F2, F3 → fronts.pdf (pages 1,2,3)
+
+Flip stack & scan:  B3, B2, B1 → backs.pdf (pages 1,2,3 = original B3,B2,B1)
+
+flipdf merges:      F1, B1, F2, B2, F3, B3 → merged.pdf (correct order!)
 ```
-
-The backs are reversed (since the stack was flipped), and pages are interleaved to restore the correct order.
-
-## Building from Source
-
-```bash
-git clone https://github.com/higashi-masanari/duplex-scan-merger
-cd duplex-scan-merger
-cargo build --release
-```
-
-The binary will be at `target/release/duplex-scan-merger`.
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+MIT

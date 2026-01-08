@@ -27,23 +27,23 @@ jobs:
         run: |
           mkdir -p target/release
           lipo -create \
-            target/x86_64-apple-darwin/release/duplex-scan-merger \
-            target/aarch64-apple-darwin/release/duplex-scan-merger \
-            -output target/release/duplex-scan-merger
+            target/x86_64-apple-darwin/release/flipdf \
+            target/aarch64-apple-darwin/release/flipdf \
+            -output target/release/flipdf
 
       - name: Create tarball
         run: |
           cd target/release
-          tar -czvf duplex-scan-merger-${{ github.ref_name }}-macos.tar.gz duplex-scan-merger
-          shasum -a 256 duplex-scan-merger-${{ github.ref_name }}-macos.tar.gz > duplex-scan-merger-${{ github.ref_name }}-macos.tar.gz.sha256
+          tar -czvf flipdf-${{ github.ref_name }}-macos.tar.gz flipdf
+          shasum -a 256 flipdf-${{ github.ref_name }}-macos.tar.gz > flipdf-${{ github.ref_name }}-macos.tar.gz.sha256
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: macos-binary
           path: |
-            target/release/duplex-scan-merger-${{ github.ref_name }}-macos.tar.gz
-            target/release/duplex-scan-merger-${{ github.ref_name }}-macos.tar.gz.sha256
+            target/release/flipdf-${{ github.ref_name }}-macos.tar.gz
+            target/release/flipdf-${{ github.ref_name }}-macos.tar.gz.sha256
 
   release:
     name: Create Release
@@ -61,6 +61,6 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            duplex-scan-merger-${{ github.ref_name }}-macos.tar.gz
-            duplex-scan-merger-${{ github.ref_name }}-macos.tar.gz.sha256
+            flipdf-${{ github.ref_name }}-macos.tar.gz
+            flipdf-${{ github.ref_name }}-macos.tar.gz.sha256
           generate_release_notes: true
