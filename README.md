@@ -4,7 +4,7 @@ Merge duplex-scanned PDFs into proper page order — for home scanners without a
 
 ## Why?
 
-Many home multifunction printers (like the Brother MFC-J7460DN) have ADF (Auto Document Feeder) for continuous scanning, but lack automatic duplex scanning. This means scanning double-sided documents requires:
+Many home multifunction printers (like the Brother MFC-7460DN) have ADF (Auto Document Feeder) for continuous scanning, but lack automatic duplex scanning. This means scanning double-sided documents requires:
 
 1. Scan all front pages → `fronts.pdf`
 2. Flip the stack, scan all back pages → `backs.pdf` (pages come out in reverse order)
@@ -29,13 +29,6 @@ cd flipdf
 cargo install --path .
 ```
 
-### Dependencies
-
-flipdf requires `qpdf` for PDF manipulation:
-
-```bash
-brew install qpdf
-```
 
 ## Usage
 
