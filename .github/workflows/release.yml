@@ -1,0 +1,66 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    name: Build for macOS
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+        with:
+          targets: x86_64-apple-darwin,aarch64-apple-darwin
+
+      - name: Build for x86_64
+        run: cargo build --release --target x86_64-apple-darwin
+
+      - name: Build for aarch64
+        run: cargo build --release --target aarch64-apple-darwin
+
+      - name: Create Universal Binary
+        run: |
+          mkdir -p target/release
+          lipo -create \
+            target/x86_64-apple-darwin/release/duplex-scan-merger \
+            target/aarch64-apple-darwin/release/duplex-scan-merger \
+            -output target/release/duplex-scan-merger
+
+      - name: Create tarball
+        run: |
+          cd target/release
+          tar -czvf duplex-scan-merger-${{ github.ref_name }}-macos.tar.gz duplex-scan-merger
+          shasum -a 256 duplex-scan-merger-${{ github.ref_name }}-macos.tar.gz > duplex-scan-merger-${{ github.ref_name }}-macos.tar.gz.sha256
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-binary
+          path: |
+            target/release/duplex-scan-merger-${{ github.ref_name }}-macos.tar.gz
+            target/release/duplex-scan-merger-${{ github.ref_name }}-macos.tar.gz.sha256
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-binary
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            duplex-scan-merger-${{ github.ref_name }}-macos.tar.gz
+            duplex-scan-merger-${{ github.ref_name }}-macos.tar.gz.sha256
+          generate_release_notes: true
