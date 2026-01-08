@@ -16,14 +16,14 @@ This tool interleaves them into the correct reading order: front1, back1, front2
 ### Using Homebrew
 
 ```bash
-brew tap higashi-masanari/tap
+brew tap M-Igashi/homebrew-tap
 brew install duplex-scan-merger
 ```
 
 ### From Source
 
 ```bash
-cargo install --git https://github.com/higashi-masanari/duplex-scan-merger
+cargo install --git https://github.com/M-Igashi/duplex-scan-merger
 ```
 
 ## Usage
