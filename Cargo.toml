@@ -1,6 +1,6 @@
 [package]
 name = "flipdf"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["Masanari Higashi"]
 description = "Merge duplex-scanned PDFs into proper page order - for home scanners without auto-duplex"
