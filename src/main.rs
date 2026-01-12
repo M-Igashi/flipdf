@@ -67,27 +67,29 @@ enum Commands {
 fn find_pdfs_in_current_dir() -> Result<Vec<PathBuf>> {
     let mut pdfs: Vec<(PathBuf, std::time::SystemTime)> = Vec::new();
 
-    for entry in glob("*.pdf").context("Failed to read glob pattern")? {
-        if let Ok(path) = entry {
-            if let Ok(metadata) = fs::metadata(&path) {
-                if let Ok(modified) = metadata.modified() {
-                    pdfs.push((path, modified));
-                }
+    for path in glob("*.pdf")
+        .context("Failed to read glob pattern")?
+        .flatten()
+    {
+        if let Ok(metadata) = fs::metadata(&path) {
+            if let Ok(modified) = metadata.modified() {
+                pdfs.push((path, modified));
             }
         }
     }
 
     // Also check *.PDF (case insensitive on some systems)
-    for entry in glob("*.PDF").context("Failed to read glob pattern")? {
-        if let Ok(path) = entry {
-            // Skip if already added (case-insensitive filesystems)
-            if pdfs.iter().any(|(p, _)| p == &path) {
-                continue;
-            }
-            if let Ok(metadata) = fs::metadata(&path) {
-                if let Ok(modified) = metadata.modified() {
-                    pdfs.push((path, modified));
-                }
+    for path in glob("*.PDF")
+        .context("Failed to read glob pattern")?
+        .flatten()
+    {
+        // Skip if already added (case-insensitive filesystems)
+        if pdfs.iter().any(|(p, _)| p == &path) {
+            continue;
+        }
+        if let Ok(metadata) = fs::metadata(&path) {
+            if let Ok(modified) = metadata.modified() {
+                pdfs.push((path, modified));
             }
         }
     }
@@ -196,7 +198,10 @@ fn list_pdfs(all: bool) -> Result<()> {
     }
 
     if !all && pdfs.len() > 10 {
-        println!("\n  ... and {} more (use --all to show all)", pdfs.len() - 10);
+        println!(
+            "\n  ... and {} more (use --all to show all)",
+            pdfs.len() - 10
+        );
     }
 
     println!("\nTo merge the 2 newest PDFs, just run: flipdf");
@@ -254,8 +259,15 @@ fn merge_duplex_scans(cli: &Cli) -> Result<()> {
     if cli.dry_run {
         println!("Dry run - would merge:");
         println!("  Fronts: {}", fronts_path.display());
-        println!("  Backs:  {} {}", backs_path.display(), 
-            if cli.no_reverse { "(no reverse)" } else { "(reversed)" });
+        println!(
+            "  Backs:  {} {}",
+            backs_path.display(),
+            if cli.no_reverse {
+                "(no reverse)"
+            } else {
+                "(reversed)"
+            }
+        );
         if let Some(ref p) = cli.prepend {
             println!("  Prepend: {}", p.display());
         }
@@ -279,7 +291,11 @@ fn merge_duplex_scans(cli: &Cli) -> Result<()> {
         "Backs:  {} ({} pages){}",
         backs_path.display(),
         num_backs,
-        if cli.no_reverse { "" } else { " [will be reversed]" }
+        if cli.no_reverse {
+            ""
+        } else {
+            " [will be reversed]"
+        }
     ));
 
     if num_fronts != num_backs {
@@ -319,11 +335,7 @@ fn merge_duplex_scans(cli: &Cli) -> Result<()> {
         temp_pdfs.push(front_temp);
 
         // Back page: reverse order (flipped stack) or normal order
-        let back_page_num = if cli.no_reverse {
-            i + 1
-        } else {
-            num_backs - i
-        };
+        let back_page_num = if cli.no_reverse { i + 1 } else { num_backs - i };
         let back_temp = temp_dir.path().join(format!("back_{:04}.pdf", i));
         extract_pages(&backs_path, &back_page_num.to_string(), &back_temp)?;
         temp_pdfs.push(back_temp);
@@ -343,11 +355,7 @@ fn merge_duplex_scans(cli: &Cli) -> Result<()> {
         }
     } else if num_backs > num_fronts {
         for i in num_fronts..num_backs {
-            let back_page_num = if cli.no_reverse {
-                i + 1
-            } else {
-                num_backs - i
-            };
+            let back_page_num = if cli.no_reverse { i + 1 } else { num_backs - i };
             let back_temp = temp_dir.path().join(format!("extra_back_{:04}.pdf", i));
             extract_pages(&backs_path, &back_page_num.to_string(), &back_temp)?;
             temp_pdfs.push(back_temp);
