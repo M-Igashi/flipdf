@@ -67,29 +67,20 @@ enum Commands {
 fn find_pdfs_in_current_dir() -> Result<Vec<PathBuf>> {
     let mut pdfs: Vec<(PathBuf, std::time::SystemTime)> = Vec::new();
 
-    for path in glob("*.pdf")
-        .context("Failed to read glob pattern")?
-        .flatten()
-    {
-        if let Ok(metadata) = fs::metadata(&path) {
-            if let Ok(modified) = metadata.modified() {
-                pdfs.push((path, modified));
+    // Check both *.pdf and *.PDF patterns
+    for pattern in ["*.pdf", "*.PDF"] {
+        for path in glob(pattern)
+            .context("Failed to read glob pattern")?
+            .flatten()
+        {
+            // Skip if already added (case-insensitive filesystems)
+            if pdfs.iter().any(|(p, _)| p == &path) {
+                continue;
             }
-        }
-    }
-
-    // Also check *.PDF (case insensitive on some systems)
-    for path in glob("*.PDF")
-        .context("Failed to read glob pattern")?
-        .flatten()
-    {
-        // Skip if already added (case-insensitive filesystems)
-        if pdfs.iter().any(|(p, _)| p == &path) {
-            continue;
-        }
-        if let Ok(metadata) = fs::metadata(&path) {
-            if let Ok(modified) = metadata.modified() {
-                pdfs.push((path, modified));
+            if let Ok(metadata) = fs::metadata(&path) {
+                if let Ok(modified) = metadata.modified() {
+                    pdfs.push((path, modified));
+                }
             }
         }
     }
@@ -181,7 +172,7 @@ fn list_pdfs(all: bool) -> Result<()> {
         return Ok(());
     }
 
-    let limit = if all { pdfs.len() } else { 10.min(pdfs.len()) };
+    let limit = if all { pdfs.len() } else { pdfs.len().min(10) };
 
     println!("PDF files in current directory (newest first):\n");
     for (i, pdf) in pdfs.iter().take(limit).enumerate() {
@@ -282,6 +273,11 @@ fn merge_duplex_scans(cli: &Cli) -> Result<()> {
     let num_fronts = get_page_count(&fronts_path)?;
     let num_backs = get_page_count(&backs_path)?;
 
+    let reverse_note = if cli.no_reverse {
+        ""
+    } else {
+        " [will be reversed]"
+    };
     log(&format!(
         "Fronts: {} ({} pages)",
         fronts_path.display(),
@@ -291,11 +287,7 @@ fn merge_duplex_scans(cli: &Cli) -> Result<()> {
         "Backs:  {} ({} pages){}",
         backs_path.display(),
         num_backs,
-        if cli.no_reverse {
-            ""
-        } else {
-            " [will be reversed]"
-        }
+        reverse_note
     ));
 
     if num_fronts != num_backs {
@@ -406,21 +398,21 @@ mod tests {
 
     #[test]
     fn test_auto_detect_mode() {
-        let cli = Cli::parse_from(&["flipdf"]);
+        let cli = Cli::parse_from(["flipdf"]);
         assert!(cli.fronts.is_none());
         assert!(cli.backs.is_none());
     }
 
     #[test]
     fn test_explicit_files() {
-        let cli = Cli::parse_from(&["flipdf", "fronts.pdf", "backs.pdf"]);
+        let cli = Cli::parse_from(["flipdf", "fronts.pdf", "backs.pdf"]);
         assert_eq!(cli.fronts, Some(PathBuf::from("fronts.pdf")));
         assert_eq!(cli.backs, Some(PathBuf::from("backs.pdf")));
     }
 
     #[test]
     fn test_with_options() {
-        let cli = Cli::parse_from(&[
+        let cli = Cli::parse_from([
             "flipdf",
             "fronts.pdf",
             "backs.pdf",
@@ -442,13 +434,13 @@ mod tests {
 
     #[test]
     fn test_list_command() {
-        let cli = Cli::parse_from(&["flipdf", "list"]);
+        let cli = Cli::parse_from(["flipdf", "list"]);
         assert!(matches!(cli.command, Some(Commands::List { all: false })));
     }
 
     #[test]
     fn test_list_all() {
-        let cli = Cli::parse_from(&["flipdf", "list", "--all"]);
+        let cli = Cli::parse_from(["flipdf", "list", "--all"]);
         assert!(matches!(cli.command, Some(Commands::List { all: true })));
     }
 }
