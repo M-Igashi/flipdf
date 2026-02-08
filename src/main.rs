@@ -67,13 +67,11 @@ enum Commands {
 fn find_pdfs_in_current_dir() -> Result<Vec<PathBuf>> {
     let mut pdfs: Vec<(PathBuf, std::time::SystemTime)> = Vec::new();
 
-    // Check both *.pdf and *.PDF patterns
     for pattern in ["*.pdf", "*.PDF"] {
         for path in glob(pattern)
             .context("Failed to read glob pattern")?
             .flatten()
         {
-            // Skip if already added (case-insensitive filesystems)
             if pdfs.iter().any(|(p, _)| p == &path) {
                 continue;
             }
@@ -116,15 +114,11 @@ fn merge_pdfs(input_paths: &[PathBuf], output_path: &Path) -> Result<()> {
         bail!("No input files to merge");
     }
 
-    let mut args: Vec<String> = vec!["--empty".to_string()];
-    args.push("--pages".to_string());
+    let page_args: Vec<&str> = input_paths.iter().map(|p| p.to_str().unwrap()).collect();
 
-    for path in input_paths {
-        args.push(path.to_str().unwrap().to_string());
-    }
-
-    args.push("--".to_string());
-    args.push(output_path.to_str().unwrap().to_string());
+    let mut args = vec!["--empty", "--pages"];
+    args.extend(&page_args);
+    args.extend(["--", output_path.to_str().unwrap()]);
 
     let status = Command::new("qpdf")
         .args(&args)
@@ -140,15 +134,10 @@ fn merge_pdfs(input_paths: &[PathBuf], output_path: &Path) -> Result<()> {
 
 /// Extract specific pages from a PDF
 fn extract_pages(pdf_path: &Path, pages: &str, output_path: &Path) -> Result<()> {
+    let input = pdf_path.to_str().unwrap();
+    let output = output_path.to_str().unwrap();
     let status = Command::new("qpdf")
-        .args([
-            pdf_path.to_str().unwrap(),
-            "--pages",
-            pdf_path.to_str().unwrap(),
-            pages,
-            "--",
-            output_path.to_str().unwrap(),
-        ])
+        .args([input, "--pages", input, pages, "--", output])
         .status()
         .context("Failed to run qpdf")?;
 
@@ -302,6 +291,15 @@ fn merge_duplex_scans(cli: &Cli) -> Result<()> {
     let mut temp_pdfs: Vec<PathBuf> = Vec::new();
     let mut total_pages = 0;
 
+    // Back page number: reverse order (flipped stack) unless --no-reverse
+    let back_page_num = |i: usize| -> usize {
+        if cli.no_reverse {
+            i + 1
+        } else {
+            num_backs - i
+        }
+    };
+
     // Handle prepend
     if let Some(ref prepend_path) = cli.prepend {
         if !prepend_path.exists() {
@@ -320,16 +318,12 @@ fn merge_duplex_scans(cli: &Cli) -> Result<()> {
     // Interleave pages
     let num_sheets = num_fronts.min(num_backs);
     for i in 0..num_sheets {
-        // Front page: sequential order (1-indexed)
-        let front_page_num = i + 1;
         let front_temp = temp_dir.path().join(format!("front_{:04}.pdf", i));
-        extract_pages(&fronts_path, &front_page_num.to_string(), &front_temp)?;
+        extract_pages(&fronts_path, &(i + 1).to_string(), &front_temp)?;
         temp_pdfs.push(front_temp);
 
-        // Back page: reverse order (flipped stack) or normal order
-        let back_page_num = if cli.no_reverse { i + 1 } else { num_backs - i };
         let back_temp = temp_dir.path().join(format!("back_{:04}.pdf", i));
-        extract_pages(&backs_path, &back_page_num.to_string(), &back_temp)?;
+        extract_pages(&backs_path, &back_page_num(i).to_string(), &back_temp)?;
         temp_pdfs.push(back_temp);
 
         total_pages += 2;
@@ -338,20 +332,20 @@ fn merge_duplex_scans(cli: &Cli) -> Result<()> {
     // Handle remaining pages if counts don't match
     if num_fronts > num_backs {
         for i in num_backs..num_fronts {
-            let front_page_num = i + 1;
+            let page_num = i + 1;
             let front_temp = temp_dir.path().join(format!("extra_front_{:04}.pdf", i));
-            extract_pages(&fronts_path, &front_page_num.to_string(), &front_temp)?;
+            extract_pages(&fronts_path, &page_num.to_string(), &front_temp)?;
             temp_pdfs.push(front_temp);
-            log(&format!("Extra front page: {}", front_page_num));
+            log(&format!("Extra front page: {}", page_num));
             total_pages += 1;
         }
     } else if num_backs > num_fronts {
         for i in num_fronts..num_backs {
-            let back_page_num = if cli.no_reverse { i + 1 } else { num_backs - i };
+            let page_num = back_page_num(i);
             let back_temp = temp_dir.path().join(format!("extra_back_{:04}.pdf", i));
-            extract_pages(&backs_path, &back_page_num.to_string(), &back_temp)?;
+            extract_pages(&backs_path, &page_num.to_string(), &back_temp)?;
             temp_pdfs.push(back_temp);
-            log(&format!("Extra back page: {}", back_page_num));
+            log(&format!("Extra back page: {}", page_num));
             total_pages += 1;
         }
     }
