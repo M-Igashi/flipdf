@@ -8,6 +8,7 @@ license = "MIT"
 repository = "https://github.com/M-Igashi/flipdf"
 keywords = ["pdf", "duplex", "scanner", "merge", "brother"]
 categories = ["command-line-utilities"]
+exclude = ["CLAUDE.md"]
 
 [[bin]]
 name = "flipdf"
