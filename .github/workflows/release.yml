@@ -56,7 +56,9 @@ jobs:
           path: target/release/flipdf-${{ github.ref_name }}-macos.tar.gz
 
       - name: Save SHA256
-        run: echo "${{ steps.sha256.outputs.sha256 }}" > sha256.txt
+        env:
+          SHA256: ${{ steps.sha256.outputs.sha256 }}
+        run: echo "$SHA256" > sha256.txt
 
       - name: Upload SHA256
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
