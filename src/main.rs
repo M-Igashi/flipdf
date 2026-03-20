@@ -1,6 +1,7 @@
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use glob::glob;
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -63,21 +64,23 @@ enum Commands {
     },
 }
 
-/// Find PDF files in the current directory, sorted by modification time (newest first)
-fn find_pdfs_in_current_dir() -> Result<Vec<PathBuf>> {
-    let mut pdfs: Vec<(PathBuf, std::time::SystemTime)> = Vec::new();
+/// Find PDF files in the current directory, sorted by modification time (newest first).
+/// Returns tuples of (path, metadata) so callers can reuse metadata without re-fetching.
+fn find_pdfs_in_current_dir() -> Result<Vec<(PathBuf, fs::Metadata)>> {
+    let mut seen = HashSet::new();
+    let mut pdfs: Vec<(PathBuf, std::time::SystemTime, fs::Metadata)> = Vec::new();
 
     for pattern in ["*.pdf", "*.PDF"] {
         for path in glob(pattern)
             .context("Failed to read glob pattern")?
             .flatten()
         {
-            if pdfs.iter().any(|(p, _)| p == &path) {
+            if !seen.insert(path.clone()) {
                 continue;
             }
             if let Ok(metadata) = fs::metadata(&path) {
                 if let Ok(modified) = metadata.modified() {
-                    pdfs.push((path, modified));
+                    pdfs.push((path, modified, metadata));
                 }
             }
         }
@@ -86,7 +89,7 @@ fn find_pdfs_in_current_dir() -> Result<Vec<PathBuf>> {
     // Sort by modification time, newest first
     pdfs.sort_by(|a, b| b.1.cmp(&a.1));
 
-    Ok(pdfs.into_iter().map(|(p, _)| p).collect())
+    Ok(pdfs.into_iter().map(|(p, _, m)| (p, m)).collect())
 }
 
 /// Get the number of pages in a PDF using qpdf
@@ -164,14 +167,13 @@ fn list_pdfs(all: bool) -> Result<()> {
     let limit = if all { pdfs.len() } else { pdfs.len().min(10) };
 
     println!("PDF files in current directory (newest first):\n");
-    for (i, pdf) in pdfs.iter().take(limit).enumerate() {
-        let metadata = fs::metadata(pdf)?;
+    for (i, (path, metadata)) in pdfs.iter().take(limit).enumerate() {
         let size_kb = metadata.len() / 1024;
-        let pages = get_page_count(pdf).unwrap_or(0);
+        let pages = get_page_count(path).unwrap_or(0);
         println!(
             "  {}. {} ({} pages, {} KB)",
             i + 1,
-            pdf.display(),
+            path.display(),
             pages,
             size_kb
         );
@@ -213,15 +215,14 @@ fn merge_duplex_scans(cli: &Cli) -> Result<()> {
                     pdfs.len()
                 );
             }
+            // Backs are scanned AFTER fronts, so [0] (newest) = backs, [1] (older) = fronts
+            let (fronts, backs) = (&pdfs[1].0, &pdfs[0].0);
             log(&format!(
                 "Auto-detected PDFs (newest first):\n  Fronts: {}\n  Backs:  {}",
-                pdfs[0].display(),
-                pdfs[1].display()
+                fronts.display(),
+                backs.display()
             ));
-            // Newest = fronts (scanned first), second newest = backs (scanned after flipping)
-            // Actually, backs are scanned AFTER fronts, so backs should be newer
-            // Let's use: [0] = backs (newer), [1] = fronts (older)
-            (pdfs[1].clone(), pdfs[0].clone())
+            (fronts.clone(), backs.clone())
         }
     };
 
