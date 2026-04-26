@@ -87,7 +87,7 @@ fn find_pdfs_in_current_dir() -> Result<Vec<(PathBuf, fs::Metadata)>> {
     }
 
     // Sort by modification time, newest first
-    pdfs.sort_by(|a, b| b.1.cmp(&a.1));
+    pdfs.sort_by_key(|p| std::cmp::Reverse(p.1));
 
     Ok(pdfs.into_iter().map(|(p, _, m)| (p, m)).collect())
 }
