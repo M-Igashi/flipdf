@@ -79,7 +79,7 @@ jobs:
           name: macos-binary
 
       - name: Create Release
-        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3  # v2
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           files: flipdf-${{ github.ref_name }}-macos.tar.gz
           generate_release_notes: true
@@ -113,12 +113,14 @@ jobs:
 
           cat > Formula/flipdf.rb << FORMULA
           class Flipdf < Formula
-            desc "CLI tool to reverse page order in PDF files"
+            desc "Merge duplex-scanned PDFs into proper page order"
             homepage "https://github.com/M-Igashi/flipdf"
             url "https://github.com/M-Igashi/flipdf/releases/download/${TAG}/flipdf-${TAG}-macos.tar.gz"
             sha256 "${FORMULA_SHA256}"
             version "${VERSION_NUM}"
             license "MIT"
+
+            depends_on "qpdf"
 
             def install
               bin.install "flipdf"
