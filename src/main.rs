@@ -1,10 +1,12 @@
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
-use glob::glob;
-use std::collections::HashSet;
+use std::cmp::Reverse;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+const DEFAULT_OUTPUT_PREFIX: &str = "merged_";
 
 /// flipdf - Merge duplex-scanned PDFs into proper page order
 ///
@@ -65,95 +67,98 @@ enum Commands {
 }
 
 /// Find PDF files in the current directory, sorted by modification time (newest first).
-/// Returns tuples of (path, metadata) so callers can reuse metadata without re-fetching.
 fn find_pdfs_in_current_dir() -> Result<Vec<(PathBuf, fs::Metadata)>> {
-    let mut seen = HashSet::new();
-    let mut pdfs: Vec<(PathBuf, std::time::SystemTime, fs::Metadata)> = Vec::new();
+    let mut pdfs = Vec::new();
 
-    for pattern in ["*.pdf", "*.PDF"] {
-        for path in glob(pattern)
-            .context("Failed to read glob pattern")?
-            .flatten()
-        {
-            if !seen.insert(path.clone()) {
-                continue;
-            }
-            if let Ok(metadata) = fs::metadata(&path) {
-                if let Ok(modified) = metadata.modified() {
-                    pdfs.push((path, modified, metadata));
-                }
+    for entry in fs::read_dir(".")
+        .context("Failed to read current directory")?
+        .flatten()
+    {
+        let path = PathBuf::from(entry.file_name());
+        let is_pdf = path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("pdf"));
+        if !is_pdf {
+            continue;
+        }
+        if let Ok(metadata) = fs::metadata(&path) {
+            if metadata.is_file() {
+                pdfs.push((path, metadata));
             }
         }
     }
 
-    // Sort by modification time, newest first
-    pdfs.sort_by_key(|p| std::cmp::Reverse(p.1));
+    pdfs.sort_by_key(|(_, metadata)| Reverse(metadata.modified().ok()));
 
-    Ok(pdfs.into_iter().map(|(p, _, m)| (p, m)).collect())
+    Ok(pdfs)
 }
 
-/// Get the number of pages in a PDF using qpdf
-fn get_page_count(pdf_path: &Path) -> Result<usize> {
+/// Run qpdf and return its stdout. Exit code 3 means success with warnings.
+fn run_qpdf<I, S>(args: I) -> Result<Vec<u8>>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
     let output = Command::new("qpdf")
-        .args(["--show-npages", pdf_path.to_str().unwrap()])
+        .args(args)
         .output()
         .context("Failed to run qpdf. Is qpdf installed? (brew install qpdf)")?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("qpdf failed to get page count: {}", stderr);
+    if !matches!(output.status.code(), Some(0 | 3)) {
+        bail!(
+            "qpdf failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
     }
 
-    let count_str = String::from_utf8_lossy(&output.stdout);
-    count_str
+    Ok(output.stdout)
+}
+
+fn get_page_count(pdf_path: &Path) -> Result<usize> {
+    let stdout = run_qpdf([OsStr::new("--show-npages"), pdf_path.as_os_str()])
+        .with_context(|| format!("Failed to get page count of {}", pdf_path.display()))?;
+
+    String::from_utf8_lossy(&stdout)
         .trim()
         .parse()
         .context("Failed to parse page count")
 }
 
-/// Merge multiple PDFs into one using qpdf
-fn merge_pdfs(input_paths: &[PathBuf], output_path: &Path) -> Result<()> {
-    if input_paths.is_empty() {
-        bail!("No input files to merge");
-    }
-
-    let page_args: Vec<&str> = input_paths.iter().map(|p| p.to_str().unwrap()).collect();
-
-    let mut args = vec!["--empty", "--pages"];
-    args.extend(&page_args);
-    args.extend(["--", output_path.to_str().unwrap()]);
-
-    let status = Command::new("qpdf")
-        .args(&args)
-        .status()
-        .context("Failed to run qpdf for merge")?;
-
-    if !status.success() {
-        bail!("qpdf failed to merge PDFs");
-    }
-
-    Ok(())
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Side {
+    Front,
+    Back,
 }
 
-/// Extract specific pages from a PDF
-fn extract_pages(pdf_path: &Path, pages: &str, output_path: &Path) -> Result<()> {
-    let input = pdf_path.to_str().unwrap();
-    let output = output_path.to_str().unwrap();
-    let status = Command::new("qpdf")
-        .args([input, "--pages", input, pages, "--", output])
-        .status()
-        .context("Failed to run qpdf")?;
+/// Interleave fronts and backs as 1-based page numbers.
+/// Leftover pages of the longer side follow at the end.
+fn page_order(num_fronts: usize, num_backs: usize, reverse_backs: bool) -> Vec<(Side, usize)> {
+    let mut order = Vec::with_capacity(num_fronts + num_backs);
 
-    if !status.success() {
-        bail!("qpdf failed to extract pages from {:?}", pdf_path);
+    for i in 0..num_fronts.max(num_backs) {
+        if i < num_fronts {
+            order.push((Side::Front, i + 1));
+        }
+        if i < num_backs {
+            let page = if reverse_backs { num_backs - i } else { i + 1 };
+            order.push((Side::Back, page));
+        }
     }
 
-    Ok(())
+    order
+}
+
+fn is_same_file(a: &Path, b: &Path) -> bool {
+    matches!((fs::canonicalize(a), fs::canonicalize(b)), (Ok(a), Ok(b)) if a == b)
 }
 
 fn generate_output_filename() -> PathBuf {
     let now = chrono::Local::now();
-    PathBuf::from(format!("merged_{}.pdf", now.format("%Y%m%d_%H%M%S")))
+    PathBuf::from(format!(
+        "{}{}.pdf",
+        DEFAULT_OUTPUT_PREFIX,
+        now.format("%Y%m%d_%H%M%S")
+    ))
 }
 
 fn list_pdfs(all: bool) -> Result<()> {
@@ -169,7 +174,7 @@ fn list_pdfs(all: bool) -> Result<()> {
     println!("PDF files in current directory (newest first):\n");
     for (i, (path, metadata)) in pdfs.iter().take(limit).enumerate() {
         let size_kb = metadata.len() / 1024;
-        let pages = get_page_count(path).unwrap_or(0);
+        let pages = get_page_count(path).map_or("?".to_string(), |n| n.to_string());
         println!(
             "  {}. {} ({} pages, {} KB)",
             i + 1,
@@ -198,25 +203,27 @@ fn merge_duplex_scans(cli: &Cli) -> Result<()> {
         }
     };
 
-    // Determine input files
     let (fronts_path, backs_path) = match (&cli.fronts, &cli.backs) {
         (Some(f), Some(b)) => (f.clone(), b.clone()),
         (Some(_), None) | (None, Some(_)) => {
             bail!("Please specify both fronts and backs PDFs, or neither for auto-detect");
         }
         (None, None) => {
-            // Auto-detect: use the two newest PDFs
-            let pdfs = find_pdfs_in_current_dir()?;
-            if pdfs.len() < 2 {
+            // Skip outputs of earlier runs so they are not picked up as scans
+            let pdfs: Vec<PathBuf> = find_pdfs_in_current_dir()?
+                .into_iter()
+                .map(|(path, _)| path)
+                .filter(|path| !path.to_string_lossy().starts_with(DEFAULT_OUTPUT_PREFIX))
+                .collect();
+            // Backs are scanned after fronts, so the newest is backs
+            let [backs, fronts, ..] = pdfs.as_slice() else {
                 bail!(
                     "Need at least 2 PDF files for auto-detect. Found: {}.\n\
                      Use 'flipdf list' to see available PDFs, or specify files explicitly:\n\
                      flipdf <fronts.pdf> <backs.pdf>",
                     pdfs.len()
                 );
-            }
-            // Backs are scanned AFTER fronts, so [0] (newest) = backs, [1] (older) = fronts
-            let (fronts, backs) = (&pdfs[1].0, &pdfs[0].0);
+            };
             log(&format!(
                 "Auto-detected PDFs (newest first):\n  Fronts: {}\n  Backs:  {}",
                 fronts.display(),
@@ -226,16 +233,27 @@ fn merge_duplex_scans(cli: &Cli) -> Result<()> {
         }
     };
 
-    // Validate input files exist
-    if !fronts_path.exists() {
-        bail!("Fronts PDF not found: {:?}", fronts_path);
-    }
-    if !backs_path.exists() {
-        bail!("Backs PDF not found: {:?}", backs_path);
-    }
-
-    // Determine output path
     let output_path = cli.output.clone().unwrap_or_else(generate_output_filename);
+
+    let inputs = [
+        ("Fronts", Some(&fronts_path)),
+        ("Backs", Some(&backs_path)),
+        ("Prepend", cli.prepend.as_ref()),
+        ("Append", cli.append.as_ref()),
+    ];
+    for (label, path) in inputs {
+        let Some(path) = path else { continue };
+        if !path.is_file() {
+            bail!("{} PDF not found: {}", label, path.display());
+        }
+        if is_same_file(path, &output_path) {
+            bail!(
+                "Output would overwrite the {} PDF: {}",
+                label.to_lowercase(),
+                path.display()
+            );
+        }
+    }
 
     if cli.dry_run {
         println!("Dry run - would merge:");
@@ -259,9 +277,9 @@ fn merge_duplex_scans(cli: &Cli) -> Result<()> {
         return Ok(());
     }
 
-    // Get page counts
     let num_fronts = get_page_count(&fronts_path)?;
     let num_backs = get_page_count(&backs_path)?;
+    let mut total_pages = num_fronts + num_backs;
 
     let reverse_note = if cli.no_reverse {
         ""
@@ -281,93 +299,47 @@ fn merge_duplex_scans(cli: &Cli) -> Result<()> {
     ));
 
     if num_fronts != num_backs {
-        log(&format!(
-            "⚠ Warning: Page count mismatch - fronts: {}, backs: {}",
+        eprintln!(
+            "⚠ Warning: Page count mismatch - fronts: {}, backs: {}. Unpaired pages go at the end.",
             num_fronts, num_backs
-        ));
+        );
     }
 
-    // Create temp directory for intermediate files
-    let temp_dir = tempfile::tempdir().context("Failed to create temp directory")?;
-    let mut temp_pdfs: Vec<PathBuf> = Vec::new();
-    let mut total_pages = 0;
+    // A single qpdf call: --pages takes (file, range) pairs in output order
+    let mut args: Vec<OsString> = vec!["--empty".into(), "--pages".into()];
 
-    // Back page number: reverse order (flipped stack) unless --no-reverse
-    let back_page_num = |i: usize| -> usize {
-        if cli.no_reverse {
-            i + 1
-        } else {
-            num_backs - i
-        }
-    };
-
-    // Handle prepend
     if let Some(ref prepend_path) = cli.prepend {
-        if !prepend_path.exists() {
-            bail!("Prepend PDF not found: {:?}", prepend_path);
-        }
-        let prepend_pages = get_page_count(prepend_path)?;
+        let pages = get_page_count(prepend_path)?;
         log(&format!(
             "Prepending: {} ({} pages)",
             prepend_path.display(),
-            prepend_pages
+            pages
         ));
-        temp_pdfs.push(prepend_path.clone());
-        total_pages += prepend_pages;
+        args.extend([prepend_path.into(), "1-z".into()]);
+        total_pages += pages;
     }
 
-    // Interleave pages
-    let num_sheets = num_fronts.min(num_backs);
-    for i in 0..num_sheets {
-        let front_temp = temp_dir.path().join(format!("front_{:04}.pdf", i));
-        extract_pages(&fronts_path, &(i + 1).to_string(), &front_temp)?;
-        temp_pdfs.push(front_temp);
-
-        let back_temp = temp_dir.path().join(format!("back_{:04}.pdf", i));
-        extract_pages(&backs_path, &back_page_num(i).to_string(), &back_temp)?;
-        temp_pdfs.push(back_temp);
-
-        total_pages += 2;
+    for (side, page) in page_order(num_fronts, num_backs, !cli.no_reverse) {
+        let path = match side {
+            Side::Front => &fronts_path,
+            Side::Back => &backs_path,
+        };
+        args.extend([path.into(), page.to_string().into()]);
     }
 
-    // Handle remaining pages if counts don't match
-    if num_fronts > num_backs {
-        for i in num_backs..num_fronts {
-            let page_num = i + 1;
-            let front_temp = temp_dir.path().join(format!("extra_front_{:04}.pdf", i));
-            extract_pages(&fronts_path, &page_num.to_string(), &front_temp)?;
-            temp_pdfs.push(front_temp);
-            log(&format!("Extra front page: {}", page_num));
-            total_pages += 1;
-        }
-    } else if num_backs > num_fronts {
-        for i in num_fronts..num_backs {
-            let page_num = back_page_num(i);
-            let back_temp = temp_dir.path().join(format!("extra_back_{:04}.pdf", i));
-            extract_pages(&backs_path, &page_num.to_string(), &back_temp)?;
-            temp_pdfs.push(back_temp);
-            log(&format!("Extra back page: {}", page_num));
-            total_pages += 1;
-        }
-    }
-
-    // Handle append
     if let Some(ref append_path) = cli.append {
-        if !append_path.exists() {
-            bail!("Append PDF not found: {:?}", append_path);
-        }
-        let append_pages = get_page_count(append_path)?;
+        let pages = get_page_count(append_path)?;
         log(&format!(
             "Appending: {} ({} pages)",
             append_path.display(),
-            append_pages
+            pages
         ));
-        temp_pdfs.push(append_path.clone());
-        total_pages += append_pages;
+        args.extend([append_path.into(), "1-z".into()]);
+        total_pages += pages;
     }
 
-    // Merge all PDFs
-    merge_pdfs(&temp_pdfs, &output_path)?;
+    args.extend(["--".into(), output_path.as_os_str().to_owned()]);
+    run_qpdf(&args).context("Failed to merge PDFs")?;
 
     log(&format!(
         "\n✓ Created: {} ({} pages)",
@@ -437,5 +409,43 @@ mod tests {
     fn test_list_all() {
         let cli = Cli::parse_from(["flipdf", "list", "--all"]);
         assert!(matches!(cli.command, Some(Commands::List { all: true })));
+    }
+
+    #[test]
+    fn test_page_order_reversed_backs() {
+        use Side::{Back, Front};
+        assert_eq!(
+            page_order(3, 3, true),
+            [
+                (Front, 1),
+                (Back, 3),
+                (Front, 2),
+                (Back, 2),
+                (Front, 3),
+                (Back, 1)
+            ]
+        );
+    }
+
+    #[test]
+    fn test_page_order_no_reverse() {
+        use Side::{Back, Front};
+        assert_eq!(
+            page_order(2, 2, false),
+            [(Front, 1), (Back, 1), (Front, 2), (Back, 2)]
+        );
+    }
+
+    #[test]
+    fn test_page_order_mismatch() {
+        use Side::{Back, Front};
+        assert_eq!(
+            page_order(3, 1, true),
+            [(Front, 1), (Back, 1), (Front, 2), (Front, 3)]
+        );
+        assert_eq!(
+            page_order(1, 3, true),
+            [(Front, 1), (Back, 3), (Back, 2), (Back, 1)]
+        );
     }
 }

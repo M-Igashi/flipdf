@@ -23,6 +23,8 @@ brew install flipdf
 
 ### From Source
 
+Requires [qpdf](https://qpdf.sourceforge.io/) on your `PATH` (Homebrew installs it automatically).
+
 ```bash
 git clone https://github.com/M-Igashi/flipdf.git
 cd flipdf
@@ -40,7 +42,7 @@ Just navigate to your scan folder and run:
 flipdf
 ```
 
-flipdf will automatically detect the two newest PDFs and merge them. The older PDF is treated as fronts, the newer as backs (since you scan fronts first, then flip and scan backs).
+flipdf will automatically detect the two newest PDFs and merge them. The older PDF is treated as fronts, the newer as backs (since you scan fronts first, then flip and scan backs). Earlier outputs named `merged_*.pdf` are ignored.
 
 ### Explicit Mode
 
