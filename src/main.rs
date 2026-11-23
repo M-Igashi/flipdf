@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const DEFAULT_OUTPUT_PREFIX: &str = "merged_";
+const LIST_LIMIT: usize = 10;
 
 /// flipdf - Merge duplex-scanned PDFs into proper page order
 ///
@@ -17,14 +18,13 @@ const DEFAULT_OUTPUT_PREFIX: &str = "merged_";
 /// 2. Flip the stack, scan all back pages → second PDF (pages in reverse order)
 /// 3. Run flipdf to merge them correctly
 #[derive(Parser, Debug)]
-#[command(name = "flipdf")]
-#[command(author, version, about, long_about = None)]
+#[command(author, version, about, verbatim_doc_comment)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
 
     /// Front pages PDF (sequential order). If omitted, auto-detect from current directory
-    #[arg(value_name = "FRONTS")]
+    #[arg(value_name = "FRONTS", requires = "backs")]
     fronts: Option<PathBuf>,
 
     /// Back pages PDF (reverse order from flipped stack)
@@ -169,7 +169,7 @@ fn list_pdfs(all: bool) -> Result<()> {
         return Ok(());
     }
 
-    let limit = if all { pdfs.len() } else { pdfs.len().min(10) };
+    let limit = if all { pdfs.len() } else { LIST_LIMIT };
 
     println!("PDF files in current directory (newest first):\n");
     for (i, (path, metadata)) in pdfs.iter().take(limit).enumerate() {
@@ -184,11 +184,9 @@ fn list_pdfs(all: bool) -> Result<()> {
         );
     }
 
-    if !all && pdfs.len() > 10 {
-        println!(
-            "\n  ... and {} more (use --all to show all)",
-            pdfs.len() - 10
-        );
+    let hidden = pdfs.len().saturating_sub(limit);
+    if hidden > 0 {
+        println!("\n  ... and {} more (use --all to show all)", hidden);
     }
 
     println!("\nTo merge the 2 newest PDFs, just run: flipdf");
@@ -205,10 +203,8 @@ fn merge_duplex_scans(cli: &Cli) -> Result<()> {
 
     let (fronts_path, backs_path) = match (&cli.fronts, &cli.backs) {
         (Some(f), Some(b)) => (f.clone(), b.clone()),
-        (Some(_), None) | (None, Some(_)) => {
-            bail!("Please specify both fronts and backs PDFs, or neither for auto-detect");
-        }
-        (None, None) => {
+        // clap requires backs with fronts, so this is the no-argument case
+        _ => {
             // Skip outputs of earlier runs so they are not picked up as scans
             let pdfs: Vec<PathBuf> = find_pdfs_in_current_dir()?
                 .into_iter()
@@ -254,19 +250,23 @@ fn merge_duplex_scans(cli: &Cli) -> Result<()> {
             );
         }
     }
+    if is_same_file(&fronts_path, &backs_path) {
+        bail!(
+            "Fronts and backs are the same file: {}",
+            fronts_path.display()
+        );
+    }
+
+    let reverse_note = if cli.no_reverse {
+        "no reverse"
+    } else {
+        "reversed"
+    };
 
     if cli.dry_run {
         println!("Dry run - would merge:");
         println!("  Fronts: {}", fronts_path.display());
-        println!(
-            "  Backs:  {} {}",
-            backs_path.display(),
-            if cli.no_reverse {
-                "(no reverse)"
-            } else {
-                "(reversed)"
-            }
-        );
+        println!("  Backs:  {} ({})", backs_path.display(), reverse_note);
         if let Some(ref p) = cli.prepend {
             println!("  Prepend: {}", p.display());
         }
@@ -281,18 +281,13 @@ fn merge_duplex_scans(cli: &Cli) -> Result<()> {
     let num_backs = get_page_count(&backs_path)?;
     let mut total_pages = num_fronts + num_backs;
 
-    let reverse_note = if cli.no_reverse {
-        ""
-    } else {
-        " [will be reversed]"
-    };
     log(&format!(
         "Fronts: {} ({} pages)",
         fronts_path.display(),
         num_fronts
     ));
     log(&format!(
-        "Backs:  {} ({} pages){}",
+        "Backs:  {} ({} pages, {})",
         backs_path.display(),
         num_backs,
         reverse_note
@@ -306,17 +301,16 @@ fn merge_duplex_scans(cli: &Cli) -> Result<()> {
     }
 
     // A single qpdf call: --pages takes (file, range) pairs in output order
+    let whole_pdf = |verb: &str, path: &Path| -> Result<usize> {
+        let pages = get_page_count(path)?;
+        log(&format!("{verb}: {} ({pages} pages)", path.display()));
+        Ok(pages)
+    };
     let mut args: Vec<OsString> = vec!["--empty".into(), "--pages".into()];
 
-    if let Some(ref prepend_path) = cli.prepend {
-        let pages = get_page_count(prepend_path)?;
-        log(&format!(
-            "Prepending: {} ({} pages)",
-            prepend_path.display(),
-            pages
-        ));
-        args.extend([prepend_path.into(), "1-z".into()]);
-        total_pages += pages;
+    if let Some(path) = &cli.prepend {
+        total_pages += whole_pdf("Prepending", path)?;
+        args.extend([path.into(), "1-z".into()]);
     }
 
     for (side, page) in page_order(num_fronts, num_backs, !cli.no_reverse) {
@@ -327,18 +321,12 @@ fn merge_duplex_scans(cli: &Cli) -> Result<()> {
         args.extend([path.into(), page.to_string().into()]);
     }
 
-    if let Some(ref append_path) = cli.append {
-        let pages = get_page_count(append_path)?;
-        log(&format!(
-            "Appending: {} ({} pages)",
-            append_path.display(),
-            pages
-        ));
-        args.extend([append_path.into(), "1-z".into()]);
-        total_pages += pages;
+    if let Some(path) = &cli.append {
+        total_pages += whole_pdf("Appending", path)?;
+        args.extend([path.into(), "1-z".into()]);
     }
 
-    args.extend(["--".into(), output_path.as_os_str().to_owned()]);
+    args.extend(["--".into(), (&output_path).into()]);
     run_qpdf(&args).context("Failed to merge PDFs")?;
 
     log(&format!(

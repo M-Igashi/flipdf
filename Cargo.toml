@@ -10,10 +10,6 @@ keywords = ["pdf", "duplex", "scanner", "merge", "brother"]
 categories = ["command-line-utilities"]
 exclude = ["CLAUDE.md"]
 
-[[bin]]
-name = "flipdf"
-path = "src/main.rs"
-
 [dependencies]
 clap = { version = "4.6", features = ["derive"] }
 anyhow = "1.0"
